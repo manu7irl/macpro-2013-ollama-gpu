@@ -50,7 +50,9 @@ All benchmarks run with Ollama installed natively, `OLLAMA_VULKAN=1`, dual FireP
 | **qwen3:8b** | ✅ 100% GPU | Best all-round model for this hardware |
 | **qwen2.5-coder:14b** | ✅ 100% GPU | Great for code tasks |
 | **qwen3.5:9b** | ❌ GPU hang | Fits in VRAM but `amdgpu: Fence fallback timer expired` on Tahiti — new `qwen35` GGUF tensor ops crash GCN 1.0. Runs CPU-only at ~2–3 tok/sec |
-| **x/z-image-turbo** (Ollama) | ❌ Linux/AMD | Ollama's image gen uses an MLX runner requiring `libcuda.so.1` — AMD not supported on Linux yet. macOS only for now. |
+| **x/z-image-turbo** (Ollama) | ❌ Linux/AMD | Ollama's image gen uses an MLX runner requiring `libcuda.so.1` — CUDA-only on Linux. |
+| **Z-Image-Turbo** (sd.cpp Vulkan) | ❌ GPU crash | `vk::DeviceLostError` during diffusion sampling — GCN 1.0 lacks fp16/bf16 matrix ops. |
+| **Z-Image-Turbo** (sd.cpp CPU) | ✅ Works | ~43s/step on Xeon → ~30 min per 512×512 image. Beautiful output, just slow. |
 | **ACE-Step 1.5** (music gen) | ❌ GPU | Tahiti not supported by ROCm 6.x. Installs and runs CPU-only via Python 3.12 venv. Slow but functional. |
 
 **Vulkan is the only GPU compute path on this hardware.** ROCm, CUDA, and MLX all require newer architectures or NVIDIA/Apple Silicon.
@@ -75,7 +77,38 @@ ACESTEP_LM_BACKEND=pt ACESTEP_INIT_LLM=false \
 
 ### What is Z-Image-Turbo?
 
-Z-Image-Turbo is a **6B parameter text-to-image model** by Alibaba Tongyi MAI, ranked #1 open-source on the Arena image leaderboard (Feb 2026). It outperforms FLUX.1 [dev] in photorealism. The model is available via Ollama (`ollama pull x/z-image-turbo`, 12 GB) but on Linux currently requires CUDA for the Ollama runner. AMD support is coming. To run it now on AMD, use stable-diffusion.cpp with the Vulkan backend.
+Z-Image-Turbo is a **6B parameter text-to-image model** by Alibaba Tongyi MAI, ranked #1 open-source on the Arena image leaderboard (Feb 2026). It outperforms FLUX.1 [dev] in photorealism.
+
+**Status on this hardware (tested):**
+- **Ollama** (`ollama pull x/z-image-turbo`): ❌ Uses an MLX runner that requires `libcuda.so.1` on Linux — CUDA-only, AMD not supported.
+- **stable-diffusion.cpp (Vulkan):** ❌ Crashes with `vk::DeviceLostError` during diffusion sampling — GCN 1.0 lacks the fp16/bf16 matrix ops the diffusion model needs.
+- **stable-diffusion.cpp (CPU):** ✅ Works. Generates high-quality images. ~43s/step on the Xeon → ~30 min for a 512×512 image at 20 steps. Functional but slow.
+
+**CPU install via stable-diffusion.cpp:**
+```bash
+git clone https://github.com/leejet/stable-diffusion.cpp
+cd stable-diffusion.cpp && git submodule update --init --recursive
+mkdir build-cpu && cd build-cpu
+cmake .. -DSD_VULKAN=OFF -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
+
+# Download models (~6 GB total)
+cd ../models
+# Diffusion model (3.6 GB):
+python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('leejet/Z-Image-Turbo-GGUF', 'z_image_turbo-Q4_K.gguf', local_dir='.')"
+# VAE (320 MB):
+python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('Comfy-Org/z_image_turbo', 'split_files/vae/ae.safetensors', local_dir='.')"
+# LLM text encoder (2.4 GB):
+python3 -c "from huggingface_hub import hf_hub_download; hf_hub_download('unsloth/Qwen3-4B-Instruct-2507-GGUF', 'Qwen3-4B-Instruct-2507-Q4_K_M.gguf', local_dir='.')"
+
+# Generate an image
+cd ..
+./build-cpu/bin/sd-cli \
+  --diffusion-model models/z_image_turbo-Q4_K.gguf \
+  --vae models/split_files/vae/ae.safetensors \
+  --llm models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+  -p "a futuristic city at night, neon lights, cyberpunk" \
+  --cfg-scale 1.0 --steps 20 -H 512 -W 512 -o output.png
+```
 
 ---
 

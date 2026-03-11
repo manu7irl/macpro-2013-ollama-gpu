@@ -33,6 +33,15 @@ On CPU alone these models run at <2 tok/sec. This fix makes the Trashcan a genui
 
 **One gotcha:** qwen3.5:9b technically fits in VRAM but causes a GPU hang on Tahiti (`amdgpu: Fence fallback timer expired on ring gfx`) — the new qwen35 GGUF architecture uses tensor ops that GCN 1.0 can't handle via Vulkan. Stick with qwen3:8b or qwen2.5 models.
 
+**What about image generation?** I tested Z-Image-Turbo (the #1 open-source text-to-image model right now) via two paths:
+- **Ollama** (`ollama pull x/z-image-turbo`): Fails on Linux/AMD — the Ollama image runner requires `libcuda.so.1` (CUDA-only for now).
+- **stable-diffusion.cpp with Vulkan:** Also crashes — same `vk::DeviceLostError` as qwen3.5 during diffusion sampling. GCN 1.0 doesn't have native fp16/bf16 matrix ops so the Vulkan shaders abort.
+- **stable-diffusion.cpp CPU-only:** Works! Generates beautiful images. But ~43s/step on the Xeon = ~30 min per 512×512 at 20 steps. Fine for overnight batches, not for interactive use.
+
+**Music generation (ACE-Step 1.5):** Text-to-music AI (prompt → full song). Installs and runs via Python 3.12 CPU-only venv. ROCm 6.x doesn't support Tahiti so no GPU acceleration. Functional, just slow.
+
+So for LLM inference the Trashcan is genuinely great in 2026. For image/audio gen, Tahiti's GCN 1.0 Vulkan hits a wall — the diffusion ops need newer GPU features. LLMs are the sweet spot.
+
 ### How to do it:
 
 **1. Update Kernel Parameters**
