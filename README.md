@@ -61,19 +61,60 @@ All benchmarks run with Ollama installed natively, `OLLAMA_VULKAN=1`, dual FireP
 
 ACE-Step 1.5 is an open-source **music generation AI** (ACE Studio + Stepfun, 2025). Give it a text prompt and it generates a full song up to 4 minutes long. Features include voice cloning, lyric editing, remixing, and support for 50+ languages.
 
+**Why not Ollama?** ACE-Step is a diffusion model pipeline (DiT + audio VAE + text encoder), not a text LLM. Ollama only runs GGUF text models — it has no concept of audio output or multi-step diffusion. They're fundamentally different tools.
+
 **CPU install on this machine (Python 3.12 required):**
 ```bash
-cd ace-step-1.5   # clone from https://github.com/ace-step/ACE-Step-1.5
-python3.12 -m venv venv_cpu && source venv_cpu/bin/activate
+git clone https://github.com/ace-step/ACE-Step-1.5 ace-step-1.5
+cd ace-step-1.5
+python3.12 -m venv venv_cpu312 && source venv_cpu312/bin/activate
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 pip install numpy transformers diffusers soundfile scipy einops accelerate \
   loguru gradio fastapi uvicorn toml huggingface_hub vector-quantize-pytorch \
   safetensors numba matplotlib
 pip install -e . --no-deps
+# Patch for meta-tensor crash on CPU (transformers + vector-quantize-pytorch incompatibility):
+python3.12 -c "
+import site, pathlib
+vqp = pathlib.Path(site.getsitepackages()[0]) / 'vector_quantize_pytorch'
+# Fix 1: residual_fsq.py
+rf = vqp / 'residual_fsq.py'; t = rf.read_text()
+rf.write_text(t.replace('assert (levels_tensor > 1).all()', 'if not levels_tensor.is_meta:\n            assert (levels_tensor > 1).all()'))
+# Fix 2: finite_scalar_quantization.py
+fsq = vqp / 'finite_scalar_quantization.py'; t = fsq.read_text()
+import re
+t = re.sub(r'if return_indices:\n            self\.codebook_size = self\._levels\.prod\(\)\.item\(\)\n            implicit_codebook = self\._indices_to_codes\(torch\.arange\(self\.codebook_size\)\)\n            self\.register_buffer',
+'if return_indices:\n            import math; self.codebook_size = math.prod(levels)\n            if not self._levels.is_meta:\n                implicit_codebook = self._indices_to_codes(torch.arange(self.codebook_size))\n                self.register_buffer', t)
+fsq.write_text(t)
+print('Patches applied.')
+"
+# Start server (downloads ~10 GB of model weights on first run)
 ACESTEP_LM_BACKEND=pt ACESTEP_INIT_LLM=false \
   python3.12 acestep/api_server.py --host 127.0.0.1 --port 8002
-# Downloads ~10 GB of model weights on first run
 ```
+
+**Generate a song (API):**
+```bash
+# Submit
+curl -X POST http://127.0.0.1:8002/release_task \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "upbeat electronic synthwave, driving beat, retro 80s vibes",
+    "lyrics": "[verse]\nYour verse here\n[chorus]\nYour chorus here",
+    "vocal_language": "en",
+    "audio_duration": 20,
+    "inference_steps": 8,
+    "guidance_scale": 7.0,
+    "seed": 42
+  }'
+# Poll (use task_id from above response)
+curl -X POST http://127.0.0.1:8002/query_result \
+  -H "Content-Type: application/json" \
+  -d '{"task_id": "TASK_ID_HERE"}'
+# Output MP3 saved to: .cache/acestep/tmp/api_audio/
+```
+
+**Performance:** ~4 min per 20-second song on the Xeon E5-1680 v2 at 8 steps. CPU-only — ROCm 6.x doesn't support Tahiti (GCN 1.0).
 
 ### What is Z-Image-Turbo?
 
