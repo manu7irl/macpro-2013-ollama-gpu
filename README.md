@@ -45,10 +45,37 @@ All benchmarks run with Ollama installed natively, `OLLAMA_VULKAN=1`, dual FireP
 
 ### Compatibility Notes
 
-- **qwen3:8b** — fully working, best balance of speed and capability
-- **qwen2.5-coder:14b** — fully working, great for code tasks
-- **qwen3.5:9b** — fits in VRAM but triggers a GPU hang (`amdgpu: Fence fallback timer expired`) on Tahiti GCN 1.0 due to new tensor ops in the `qwen35` GGUF architecture. CPU-only fallback works at ~2–3 tok/sec.
-- Any model requiring ROCm (e.g. ACE-Step) will not run on GPU — Tahiti is not supported by ROCm 6.x. Vulkan is the only GPU path.
+| Tool | GPU | Notes |
+|------|-----|-------|
+| **qwen3:8b** | ✅ 100% GPU | Best all-round model for this hardware |
+| **qwen2.5-coder:14b** | ✅ 100% GPU | Great for code tasks |
+| **qwen3.5:9b** | ❌ GPU hang | Fits in VRAM but `amdgpu: Fence fallback timer expired` on Tahiti — new `qwen35` GGUF tensor ops crash GCN 1.0. Runs CPU-only at ~2–3 tok/sec |
+| **x/z-image-turbo** (Ollama) | ❌ Linux/AMD | Ollama's image gen uses an MLX runner requiring `libcuda.so.1` — AMD not supported on Linux yet. macOS only for now. |
+| **ACE-Step 1.5** (music gen) | ❌ GPU | Tahiti not supported by ROCm 6.x. Installs and runs CPU-only via Python 3.12 venv. Slow but functional. |
+
+**Vulkan is the only GPU compute path on this hardware.** ROCm, CUDA, and MLX all require newer architectures or NVIDIA/Apple Silicon.
+
+### What is ACE-Step 1.5?
+
+ACE-Step 1.5 is an open-source **music generation AI** (ACE Studio + Stepfun, 2025). Give it a text prompt and it generates a full song up to 4 minutes long. Features include voice cloning, lyric editing, remixing, and support for 50+ languages.
+
+**CPU install on this machine (Python 3.12 required):**
+```bash
+cd ace-step-1.5   # clone from https://github.com/ace-step/ACE-Step-1.5
+python3.12 -m venv venv_cpu && source venv_cpu/bin/activate
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install numpy transformers diffusers soundfile scipy einops accelerate \
+  loguru gradio fastapi uvicorn toml huggingface_hub vector-quantize-pytorch \
+  safetensors numba matplotlib
+pip install -e . --no-deps
+ACESTEP_LM_BACKEND=pt ACESTEP_INIT_LLM=false \
+  python3.12 acestep/api_server.py --host 127.0.0.1 --port 8002
+# Downloads ~10 GB of model weights on first run
+```
+
+### What is Z-Image-Turbo?
+
+Z-Image-Turbo is a **6B parameter text-to-image model** by Alibaba Tongyi MAI, ranked #1 open-source on the Arena image leaderboard (Feb 2026). It outperforms FLUX.1 [dev] in photorealism. The model is available via Ollama (`ollama pull x/z-image-turbo`, 12 GB) but on Linux currently requires CUDA for the Ollama runner. AMD support is coming. To run it now on AMD, use stable-diffusion.cpp with the Vulkan backend.
 
 ---
 
